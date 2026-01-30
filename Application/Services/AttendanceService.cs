@@ -1,6 +1,7 @@
 ﻿using DISLAMS_Assignment.Application.StateMachines;
 using DISLAMS_Assignment.Domain.Entities;
 using DISLAMS_Assignment.Domain.Enums;
+using DISLAMS_Assignment.Domain.Exceptions;
 using DISLAMS_Assignment.Infrastructure.Repositories;
 
 namespace DISLAMS_Assignment.Application.Services
@@ -54,12 +55,32 @@ namespace DISLAMS_Assignment.Application.Services
         // 2️⃣ Submit Attendance
         public void Submit(Guid recordId, string actor, RoleType role)
         {
-            Transition(
-                recordId,
-                AttendanceState.Submitted,
-                actor,
-                role,
-                "Attendance submitted");
+            try
+            {
+                // Late submission check (example: cutoff 6 PM UTC)
+                if (DateTime.UtcNow.Hour >= 18)
+                    throw new AttendanceException(AttendanceExceptionType.LateSubmission,
+                        "Attendance submission is late");
+
+                Transition(
+                    recordId,
+                    AttendanceState.Submitted,
+                    actor,
+                    role,
+                    "Attendance submitted");
+            }
+            catch (Exception ex) when (ex is AttendanceException)
+            {
+                // Already logged via exception
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new AttendanceException(
+                    AttendanceExceptionType.SystemFailure,
+                    "Unexpected system error during submission",
+                    ex);
+            }
         }
 
         // 3️⃣ Approve Attendance
@@ -164,6 +185,34 @@ namespace DISLAMS_Assignment.Application.Services
                 actor,
                 role,
                 reason));
+        }
+
+        public void RaiseParentDispute(Guid recordId, string parentId, string reason)
+        {
+            var record = _repo.GetRecord(recordId);
+
+            if (record == null)
+                throw new AttendanceException(
+                    AttendanceExceptionType.SystemFailure,
+                    "Attendance record not found");
+
+            // Add audit log
+            _repo.SaveAudit(new AuditLog(
+                record.Id,
+                "Parent Dispute",
+                record.CurrentState,
+                record.CurrentState, // state does not change
+                parentId,
+                RoleType.Parent,
+                reason));
+
+            // Optionally trigger reopen
+            record.ChangeState(AttendanceState.ReopenRequested);
+            _repo.SaveRecord(record);
+
+            throw new AttendanceException(
+                AttendanceExceptionType.ParentDispute,
+                $"Parent dispute raised for record {recordId}");
         }
     }
 }

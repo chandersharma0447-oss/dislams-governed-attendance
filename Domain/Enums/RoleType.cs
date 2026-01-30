@@ -4,6 +4,7 @@
     {
         Teacher,
         Admin,
-        Leadership
+        Leadership,
+        Parent
     }
 }
